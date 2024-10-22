@@ -1,0 +1,46 @@
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+:root {
+	--primary-color: #00b8a9;
+	--secondary-color: #f0f2f5;
+	--text-color: #333333;
+	--bg-color: #f0f2f5;
+	--menu-text-color: #86909c;
+	--menu-active-bg: #e8f3ff;
+	--menu-active-color: #165dff;
+}
+
+body {
+	background-color: var(--bg-color);
+	color: var(--text-color);
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+		'Helvetica Neue', Arial, sans-serif;
+	@apply bg-gray-100;
+}
+
+/* 滚动槽 */
+::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+}
+::-webkit-scrollbar-track {
+	border-radius: 3px;
+	background: rgba(0, 0, 0, 0.03); /* 背景色调淡 */
+	-webkit-box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.04); /* 阴影调淡 */
+}
+/* 滚动条滑块 */
+::-webkit-scrollbar-thumb {
+	border-radius: 3px;
+	background: rgba(0, 0, 0, 0.06); /* 默认颜色调淡 */
+	-webkit-box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.1); /* 阴影调淡 */
+	transition:
+		background 0.3s ease-in-out,
+		box-shadow 0.3s ease-in-out;
+}
+/* 鼠标悬停时的滚动条滑块 */
+::-webkit-scrollbar-thumb:hover {
+	background: rgba(0, 0, 0, 0.12); /* 恢复到原来的颜色 */
+	-webkit-box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.2); /* 恢复到原来的阴影 */
+}
