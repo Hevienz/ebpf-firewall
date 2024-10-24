@@ -11,7 +11,7 @@ import (
 type WebSocketServer interface {
 	BroadcastSummary(summary interface{})
 	BroadcastBlackEvent(key string)
-	Start(port int)
+	Start(addr string)
 	HandleWebSocket(w http.ResponseWriter, r *http.Request)
 	Shutdown() error
 }

@@ -45,7 +45,7 @@ func NewWebSocketServer(fs http.FileSystem) *WebSocketServer {
 	}
 }
 
-func (s *WebSocketServer) Start(port int) {
+func (s *WebSocketServer) Start(addr string) {
 	go s.run()
 
 	s.mux.HandleFunc("/ws", s.HandleWebSocket)
@@ -55,11 +55,11 @@ func (s *WebSocketServer) Start(port int) {
 	}
 
 	s.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
+		Addr:    addr,
 		Handler: s.mux,
 	}
 
-	log.Printf("Starting WebSocket server on port %d", port)
+	log.Printf("Starting WebSocket server on addr %s", addr)
 	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Failed to start WebSocket server: %v", err)
 	}

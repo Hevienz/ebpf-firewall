@@ -51,6 +51,9 @@ func (cm *ConfigManager) LoadConfig() error {
 	if config.Interface == "" {
 		config.Interface = utils.GetDefaultInterface()
 	}
+	if !utils.CheckAddr(config.Addr) {
+		return fmt.Errorf("addr 格式错误")
+	}
 	cm.Config = &config
 	return nil
 }

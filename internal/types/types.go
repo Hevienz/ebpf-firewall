@@ -22,7 +22,7 @@ type ConfigBlack struct {
 type Config struct {
 	Interface      string      `json:"interface" yaml:"interface"`
 	SummaryTime    int         `json:"summary_time" yaml:"summary_time"`
-	Port           int         `json:"port" yaml:"port"`
+	Addr           string      `json:"addr" yaml:"addr"`
 	Enable         bool        `json:"enable" yaml:"enable"`
 	Rules          []Rule      `json:"rule" yaml:"rule"`
 	MaxPacketCount int         `json:"max_packet_count" yaml:"max_packet_count"`
