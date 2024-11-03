@@ -1,3 +1,5 @@
+import { IncrementMetrics } from 'types'
+
 export function classNames(...classes: unknown[]): string {
 	return classes.filter(Boolean).join(' ')
 }
@@ -86,4 +88,79 @@ export function getDateDiff(dateTimeStamp: any): string {
 		result = parseInt(mC * 10 + '') + '秒 之前'
 	}
 	return result
+}
+
+export function buildOption(data: IncrementMetrics[], tooltipFormatter: (params: any) => string) {
+	return {
+		xAxis: {
+			type: 'category',
+			data: data.map(x => x.time),
+			axisLabel: { show: false },
+			axisLine: { show: false },
+			axisTick: { show: false }
+		},
+		yAxis: [
+			{
+				type: 'value',
+				name: '包数',
+				axisLabel: { show: false },
+				axisLine: { show: false },
+				axisTick: { show: false },
+				splitLine: { show: false }
+			},
+			{
+				type: 'value',
+				name: '字节数',
+				axisLabel: { show: false },
+				axisLine: { show: false },
+				axisTick: { show: false },
+				splitLine: { show: false }
+			}
+		],
+		series: [
+			{
+				data: data.map(x => x.packets),
+				type: 'bar',
+				itemStyle: {
+					color: '#10B981'
+				},
+				yAxisIndex: 1,
+				barWidth: '60%',
+				showBackground: true,
+				backgroundStyle: {
+					color: 'rgba(180, 180, 180, 0.2)'
+				}
+			},
+			{
+				data: data.map(x => x.bytes),
+				type: 'line',
+				smooth: true,
+				itemStyle: {
+					color: '#34D399'
+				},
+				lineStyle: {
+					color: '#34D399'
+				},
+				areaStyle: {
+					color: 'rgba(52, 211, 153, 0.2)'
+				}
+			}
+		],
+		tooltip: {
+			trigger: 'axis',
+			axisPointer: {
+				type: 'shadow'
+			},
+			formatter: (params: any) => {
+				return tooltipFormatter(params)
+			}
+		},
+		grid: {
+			left: '0',
+			right: '0',
+			bottom: '3%',
+			top: '3%',
+			containLabel: true
+		}
+	}
 }

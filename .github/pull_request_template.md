@@ -1,17 +1,21 @@
-## Pull Request Guidelines
+## Pull Request
 
-- Commit info should be formatted as `type(scope): info about commit`. (e.g. `fix(xdp): fix the memory leak issue in the XDP program.`)
+Please make sure you have read our [Contributing Guidelines](../CONTRIBUTING.md) before submitting this PR.
 
-  1. type: type must be one of [build, chore, docs, feat, fix, perf, refactor, revert, release, test, improvement].
+### Description
 
-  2. scope: scope must be one of [ebpf, usercomm, dataproc, frontend, ui, docs, build, deploy, other].
+<!-- Briefly describe the purpose of this PR -->
 
-  3. header: header must not be longer than 72 characters.
+### Pre-submission Checklist
 
-- Make sure that running `go build` outputs the correct files.
+- [ ] I have read and followed the [Contributing Guidelines](../CONTRIBUTING.md)
+- [ ] Commit messages follow the specified format
+- [ ] Code follows project style guidelines
+- [ ] Tests have been added/updated
+- [ ] Documentation has been updated
+- [ ] All CI checks pass
+- [ ] Rebased on latest dev branch
 
-- Rebase before creating a PR to keep commit history clear.
+### Related Issues
 
-- Make sure PRs are created to `dev` branch instead of `main` branch.
-
-- If your PR fixes a bug, please provide a description about the related bug.
+<!-- Link any related issues here -->
