@@ -12,6 +12,33 @@ import (
 	"github.com/cilium/ebpf"
 )
 
+type xdpIn6Addr struct{ In6U struct{ U6Addr8 [16]uint8 } }
+
+type xdpIpv4TrieKey struct {
+	Prefixlen uint32
+	Addr      uint32
+}
+
+type xdpIpv6TrieKey struct {
+	Prefixlen uint32
+	Addr      xdpIn6Addr
+}
+
+type xdpPacketInfo struct {
+	SrcIp     uint32
+	DstIp     uint32
+	SrcIpv6   [4]uint32
+	DstIpv6   [4]uint32
+	SrcPort   uint16
+	DstPort   uint16
+	SrcMac    [6]uint8
+	DstMac    [6]uint8
+	EthProto  uint16
+	IpProto   uint16
+	PktSize   uint32
+	MatchType uint32
+}
+
 // loadXdp returns the embedded CollectionSpec for xdp.
 func loadXdp() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_XdpBytes)
@@ -60,11 +87,13 @@ type xdpProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type xdpMapSpecs struct {
-	BlackEvents   *ebpf.MapSpec `ebpf:"black_events"`
-	Events        *ebpf.MapSpec `ebpf:"events"`
-	Ipv4Blacklist *ebpf.MapSpec `ebpf:"ipv4_blacklist"`
-	Ipv6Blacklist *ebpf.MapSpec `ebpf:"ipv6_blacklist"`
-	MacBlacklist  *ebpf.MapSpec `ebpf:"mac_blacklist"`
+	Events       *ebpf.MapSpec `ebpf:"events"`
+	Ipv4CidrTrie *ebpf.MapSpec `ebpf:"ipv4_cidr_trie"`
+	Ipv4List     *ebpf.MapSpec `ebpf:"ipv4_list"`
+	Ipv6CidrTrie *ebpf.MapSpec `ebpf:"ipv6_cidr_trie"`
+	Ipv6List     *ebpf.MapSpec `ebpf:"ipv6_list"`
+	MacList      *ebpf.MapSpec `ebpf:"mac_list"`
+	Scratch      *ebpf.MapSpec `ebpf:"scratch"`
 }
 
 // xdpObjects contains all objects after they have been loaded into the kernel.
@@ -86,20 +115,24 @@ func (o *xdpObjects) Close() error {
 //
 // It can be passed to loadXdpObjects or ebpf.CollectionSpec.LoadAndAssign.
 type xdpMaps struct {
-	BlackEvents   *ebpf.Map `ebpf:"black_events"`
-	Events        *ebpf.Map `ebpf:"events"`
-	Ipv4Blacklist *ebpf.Map `ebpf:"ipv4_blacklist"`
-	Ipv6Blacklist *ebpf.Map `ebpf:"ipv6_blacklist"`
-	MacBlacklist  *ebpf.Map `ebpf:"mac_blacklist"`
+	Events       *ebpf.Map `ebpf:"events"`
+	Ipv4CidrTrie *ebpf.Map `ebpf:"ipv4_cidr_trie"`
+	Ipv4List     *ebpf.Map `ebpf:"ipv4_list"`
+	Ipv6CidrTrie *ebpf.Map `ebpf:"ipv6_cidr_trie"`
+	Ipv6List     *ebpf.Map `ebpf:"ipv6_list"`
+	MacList      *ebpf.Map `ebpf:"mac_list"`
+	Scratch      *ebpf.Map `ebpf:"scratch"`
 }
 
 func (m *xdpMaps) Close() error {
 	return _XdpClose(
-		m.BlackEvents,
 		m.Events,
-		m.Ipv4Blacklist,
-		m.Ipv6Blacklist,
-		m.MacBlacklist,
+		m.Ipv4CidrTrie,
+		m.Ipv4List,
+		m.Ipv6CidrTrie,
+		m.Ipv6List,
+		m.MacList,
+		m.Scratch,
 	)
 }
 

@@ -1,0 +1,115 @@
+name: Docker Publish
+
+on:
+    push:
+        branches: ['main']
+        tags: ['v*.*.*']
+    pull_request:
+        branches: ['main']
+
+env:
+    IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/ebpf-firewall
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Generate version
+              id: version
+              run: |
+                  validate_version() {
+                    if [[ ! $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                      echo "Error: Invalid version format: $1"
+                      echo "Version must follow semantic versioning (e.g., 1.2.3)"
+                      exit 1
+                    fi
+                  }
+
+                  if [[ $GITHUB_REF == refs/tags/* ]]; then
+                    VERSION=${GITHUB_REF#refs/tags/v}
+                    validate_version "$VERSION"
+                  else
+                    VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
+                    VERSION=${VERSION#v}
+
+                    if [[ $VERSION == "0.0.0" ]]; then
+                      echo "No previous tags found, starting from 0.0.0"
+                    fi
+                    
+                    validate_version "$VERSION"
+                    
+                    IFS='.' read -r major minor patch <<< "$VERSION"
+                    
+                    LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
+                    
+                    COMMITS=$(git log $LAST_TAG..HEAD --pretty=format:"%s" || echo "")
+                    PR_BODIES=$(git log $LAST_TAG..HEAD --merges --pretty=format:"%b" || echo "")
+                    ALL_MESSAGES="$COMMITS"$'\n'"$PR_BODIES"
+                    
+                    echo "Commit Messages:"
+                    echo "$ALL_MESSAGES"
+                    
+                    if echo "$ALL_MESSAGES" | grep -q "BREAKING CHANGE:"; then
+                      echo "Found BREAKING CHANGE - Bumping major version"
+                      VERSION="$((major + 1)).0.0"
+                    elif echo "$ALL_MESSAGES" | grep -q "^feat\|^feat:"; then
+                      echo "Found new feature - Bumping minor version"
+                      VERSION="${major}.$((minor + 1)).0"
+                    else
+                      echo "Applying patch update"
+                      VERSION="${major}.${minor}.$((patch + 1))"
+                    fi
+                    validate_version "$VERSION"
+                  fi
+
+                  echo "New version: ${VERSION}"
+                  echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+            - name: Show version decision
+              run: |
+                  echo "Previous version: $(git describe --tags --abbrev=0 2>/dev/null || echo '0.0.0')"
+                  echo "New version: v${{ steps.version.outputs.version }}"
+
+            - name: Login to DockerHub
+              if: github.event_name != 'pull_request'
+              uses: docker/login-action@v2
+              with:
+                  username: ${{ secrets.DOCKERHUB_USERNAME }}
+                  password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+            - name: Build and push Docker image
+              uses: docker/build-push-action@v4
+              with:
+                  context: .
+                  file: Dockerfile
+                  push: ${{ github.event_name != 'pull_request' }}
+                  tags: |
+                      ${{ env.IMAGE_NAME }}:latest
+                      ${{ env.IMAGE_NAME }}:v${{ steps.version.outputs.version }}
+                  build-args: |
+                      VERSION=v${{ steps.version.outputs.version }}
+
+            - name: Verify Docker image
+              run: |
+                  echo "Docker image digest: ${{ steps.docker_build.outputs.digest }}"
+                  if [ -z "${{ steps.docker_build.outputs.digest }}" ]; then
+                    echo "Error: Docker image build failed"
+                    exit 1
+                  fi
+
+            - name: Create Git tag
+              if: github.event_name != 'pull_request'
+              run: |
+                  if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+                    echo "Error: Tag v${{ steps.version.outputs.version }} already exists"
+                    exit 1
+                  fi
+                  git config --global user.name 'GitHub Actions'
+                  git config --global user.email 'actions@github.com'
+                  git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
+                  git push origin "v${{ steps.version.outputs.version }}"
+                  echo "Created tag v${{ steps.version.outputs.version }}"

@@ -1,0 +1,7 @@
+{
+	"files.associations": {
+		"bpf_endian.h": "c",
+		"bpf.h": "c",
+		"ipv6.h": "c"
+	}
+}

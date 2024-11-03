@@ -1,120 +1,126 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
+	"log"
 	"os"
-	"path/filepath"
 
-	"github.com/danger-dream/ebpf-firewall/internal/types"
 	"github.com/danger-dream/ebpf-firewall/internal/utils"
-
-	"gopkg.in/yaml.v2"
+	"github.com/spf13/viper"
 )
 
-type ConfigManager struct {
-	configPath   string
-	Config       *types.Config
-	blackChannel chan types.WebSocketChangeBlackListPayload
+type SecurityConfig struct {
+	// Maximum number of errors allowed per IP before blocking
+	IPErrorThreshold int `mapstructure:"ip-error-threshold"`
+	// Time window in seconds for counting errors
+	ErrorWindow int `mapstructure:"error-window"`
 }
 
-func NewConfigManager(path string) (*ConfigManager, error) {
-	cm := &ConfigManager{
-		configPath:   path,
-		blackChannel: make(chan types.WebSocketChangeBlackListPayload, 1),
-	}
-	if err := cm.LoadConfig(); err != nil {
-		return nil, err
-	}
-	return cm, nil
+type RateLimitConfig struct {
+	// Maximum number of requests allowed per interval
+	RateLimitRequest int `mapstructure:"request"`
+	// Rate limit time interval in seconds
+	RateLimitInterval int `mapstructure:"interval"`
 }
 
-func (cm *ConfigManager) LoadConfig() error {
-	data, err := os.ReadFile(cm.configPath)
-	if err != nil {
-		return fmt.Errorf("error reading config file: %v", err)
+// Config holds all application configuration parameters
+type Config struct {
+	Version string `mapstructure:"version"`
+	// API authentication token for securing the web interface
+	Auth string `mapstructure:"auth"`
+	// network interface name to monitor (e.g., eth0, ens33)
+	Interface string `mapstructure:"interface"`
+	// HTTP server listening address and port (e.g., :5678, 127.0.0.1:5678)
+	Addr string `mapstructure:"addr"`
+
+	// directory to store metrics data and blacklist
+	DataDir string `mapstructure:"data-dir"`
+
+	// file path to the MaxMind GeoLite2 City database
+	GeoIPPath string `mapstructure:"geoip-path"`
+
+	// interval to persist metrics data (in minutes), 0 means disable persistence
+	MetricsPersistInterval int `mapstructure:"metrics-persist-interval"`
+
+	// RetentionHours defines how long to keep packet data in storage (in hours)
+	RetentionHours int `mapstructure:"retention-hours"`
+
+	Security SecurityConfig `mapstructure:"security"`
+
+	RateLimit RateLimitConfig `mapstructure:"rate-limit"`
+}
+
+var (
+	appConfig Config
+)
+
+func Init() error {
+	viper.SetDefault("version", "0.0.0")
+	viper.SetDefault("auth", "")
+	viper.SetDefault("interface", "")
+	viper.SetDefault("addr", ":5678")
+	viper.SetDefault("data-dir", "./data")
+	viper.SetDefault("geoip-path", "GeoLite2-City.mmdb")
+	viper.SetDefault("metrics-persist-interval", 10)
+	viper.SetDefault("retention-hours", 720)
+	viper.SetDefault("security.ip-error-threshold", 10)
+	viper.SetDefault("security.error-window", 86400)
+	viper.SetDefault("rate-limit.request", 120)
+	viper.SetDefault("rate-limit.interval", 60)
+
+	viper.SetConfigName("config")
+	viper.AddConfigPath(".")
+
+	viper.AutomaticEnv()
+	viper.SetEnvPrefix("EBPF")
+
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+			log.Printf("No config file found, using default values")
+		} else {
+			return fmt.Errorf("failed to read config: %w", err)
+		}
 	}
 
-	var config types.Config
-	ext := filepath.Ext(cm.configPath)
-	if ext == ".json" {
-		err = json.Unmarshal(data, &config)
-	} else if ext == ".yaml" || ext == ".yml" {
-		err = yaml.Unmarshal(data, &config)
-	} else {
-		return fmt.Errorf("unsupported config file format: %s", ext)
+	if err := viper.Unmarshal(&appConfig); err != nil {
+		return fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
-	if err != nil {
-		return fmt.Errorf("error parsing config file: %v", err)
+	if err := validateConfig(&appConfig); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+	return nil
+}
+
+func validateConfig(config *Config) error {
+
+	if config == nil {
+		return fmt.Errorf("config is nil")
+	}
+	if config.Auth == "" {
+		config.Auth = utils.GenerateRandomString(18)
+		log.Printf("No auth token provided, generated random auth token: %s", config.Auth)
 	}
 	if config.Interface == "" {
 		config.Interface = utils.GetDefaultInterface()
+		log.Printf("No interface provided, using default interface: %s", config.Interface)
+	} else if !utils.ValidateInterface(config.Interface) {
+		return fmt.Errorf("invalid interface: %s", config.Interface)
 	}
-	if !utils.CheckAddr(config.Addr) {
-		return fmt.Errorf("addr 格式错误")
+
+	if config.DataDir == "" {
+		config.DataDir = "./data"
+		log.Printf("No data directory provided, using default data directory: %s", config.DataDir)
 	}
-	cm.Config = &config
+
+	if _, err := os.Stat(config.DataDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(config.DataDir, 0755); err != nil {
+			return fmt.Errorf("failed to create data directory: %w", err)
+		}
+	}
 	return nil
 }
 
-func (cm *ConfigManager) SaveConfig() error {
-	ext := filepath.Ext(cm.configPath)
-	var data []byte
-	var err error
-	if ext == ".json" {
-		data, err = json.MarshalIndent(cm.Config, "", "\t")
-		if err != nil {
-			return fmt.Errorf("error marshalling config: %v", err)
-		}
-	} else if ext == ".yaml" || ext == ".yml" {
-		data, err = yaml.Marshal(cm.Config)
-		if err != nil {
-			return fmt.Errorf("error marshalling config: %v", err)
-		}
-	} else {
-		return fmt.Errorf("unsupported config file format: %s", ext)
-	}
-	return os.WriteFile(cm.configPath, data, 0644)
-}
-
-func (cm *ConfigManager) UpdateBlackList(black types.WebSocketChangeBlackListPayload) error {
-	isValid := false
-	switch black.Type {
-	case "mac":
-		isValid = utils.IsValidMAC(black.Data)
-	case "ipv4":
-		isValid = utils.IsValidIPv4(black.Data)
-	case "ipv6":
-		isValid = utils.IsValidIPv6(black.Data)
-	}
-	if !isValid {
-		return fmt.Errorf("%s 地址校验失败", black.Type)
-	}
-	if black.Inc {
-		if black.Type == "mac" {
-			cm.Config.Black.Mac = append(cm.Config.Black.Mac, black.Data)
-		} else if black.Type == "ipv4" {
-			cm.Config.Black.Ipv4 = append(cm.Config.Black.Ipv4, black.Data)
-		} else if black.Type == "ipv6" {
-			cm.Config.Black.Ipv6 = append(cm.Config.Black.Ipv6, black.Data)
-		}
-	} else {
-		if black.Type == "mac" {
-			cm.Config.Black.Mac = utils.RemoveStringFromSlice(cm.Config.Black.Mac, black.Data)
-		} else if black.Type == "ipv4" {
-			cm.Config.Black.Ipv4 = utils.RemoveStringFromSlice(cm.Config.Black.Ipv4, black.Data)
-		} else if black.Type == "ipv6" {
-			cm.Config.Black.Ipv6 = utils.RemoveStringFromSlice(cm.Config.Black.Ipv6, black.Data)
-		}
-	}
-	if err := cm.SaveConfig(); err != nil {
-		return err
-	}
-	cm.blackChannel <- black
-	return nil
-}
-
-func (cm *ConfigManager) GetBlackChannel() chan types.WebSocketChangeBlackListPayload {
-	return cm.blackChannel
+func GetConfig() *Config {
+	return &appConfig
 }

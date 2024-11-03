@@ -1,125 +1,108 @@
 package main
 
 import (
-	"flag"
-	"fmt"
+	"embed"
+	"encoding/json"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
+	"time"
 
 	"github.com/danger-dream/ebpf-firewall/internal/config"
 	"github.com/danger-dream/ebpf-firewall/internal/ebpf"
-	"github.com/danger-dream/ebpf-firewall/internal/interfaces"
+	"github.com/danger-dream/ebpf-firewall/internal/metrics"
 	"github.com/danger-dream/ebpf-firewall/internal/processor"
-	"github.com/danger-dream/ebpf-firewall/internal/websocket"
-
-	"github.com/oschwald/geoip2-golang"
+	"github.com/danger-dream/ebpf-firewall/internal/server"
+	"github.com/danger-dream/ebpf-firewall/internal/types"
+	"github.com/danger-dream/ebpf-firewall/internal/utils"
 )
 
+//go:embed web/dist
+var Static embed.FS
+
 func main() {
-	if err := run(); err != nil {
-		log.Fatalf("运行失败: %v", err)
+	if err := config.Init(); err != nil {
+		log.Fatalf("Failed to initialize config: %v", err)
 	}
-}
+	config := config.GetConfig()
+	data, _ := json.MarshalIndent(config, "", "  ")
+	log.Printf("Current configuration:\n%s", string(data))
 
-func run() error {
-	configPath := parseFlags()
-	configManager, err := config.NewConfigManager(configPath)
+	pool := utils.NewElasticPool[*types.PacketInfo](utils.PoolConfig{
+		QueueSize:  1024,
+		MinWorkers: 3,
+		MaxWorkers: int32(runtime.NumCPU() * 2),
+	})
+
+	collector := metrics.NewMetricsCollector()
+	ebpfManager := ebpf.NewEBPFManager(pool)
+
+	processor, err := processor.NewProcessor(pool, ebpfManager, collector)
 	if err != nil {
-		return fmt.Errorf("加载配置失败: %v", err)
+		log.Fatalf("failed to start processor: %v", err)
 	}
 
-	app, err := setupApplication(configManager)
-	if err != nil {
-		return fmt.Errorf("设置应用程序失败: %v", err)
+	if err := ebpfManager.Start(); err != nil {
+		log.Fatalf("failed to start eBPF manager: %v", err)
 	}
 
-	if err := app.Start(); err != nil {
-		return fmt.Errorf("启动应用程序失败: %v", err)
-	}
+	pool.Start()
 
-	waitForShutdown(app)
+	appServer := server.New(ebpfManager, collector, processor)
 
-	return nil
-}
-
-func parseFlags() string {
-	var configPath string
-	flag.StringVar(&configPath, "c", "", "配置文件路径")
-	flag.Parse()
-
-	if configPath == "" {
-		if _, err := os.Stat("config.yaml"); err == nil {
-			configPath = "config.yaml"
-		} else if _, err := os.Stat("config.json"); err == nil {
-			configPath = "config.json"
+	// priority: Try to serve local static files first
+	distPath := filepath.Join(config.DataDir, "dist")
+	if info, err := os.Stat(distPath); err == nil && info.IsDir() {
+		log.Printf("Using local static files from: %s", distPath)
+		appServer.ServeStaticDirectory(distPath)
+	} else {
+		if os.IsNotExist(err) {
+			log.Printf("Local static directory not found, using embedded files")
 		} else {
-			panic("运行目录下不存在 config.yaml 或 config.json 文件，请指定配置文件路径")
+			log.Printf("Error accessing local static directory: %v, falling back to embedded files", err)
 		}
+		appServer.ServeEmbeddedFiles(Static)
 	}
-	return configPath
-}
 
-func setupApplication(configManager *config.ConfigManager) (*Application, error) {
-	var geoipDB *geoip2.Reader
-	if configManager.Config.GeoIPPath != "" {
-		var err error
-		geoipDB, err = geoip2.Open(configManager.Config.GeoIPPath)
-		if err != nil {
-			return nil, fmt.Errorf("打开 GeoIP 数据库失败: %v", err)
+	appServer.HandleStatusNotFound()
+
+	errChan := make(chan error, 1)
+	go func() {
+		if err := appServer.Start(); err != nil {
+			errChan <- err
 		}
-	}
+	}()
 
-	ruleMatcher := processor.NewRuleMatcher(configManager.Config.Rules)
-	wsServer := websocket.NewWebSocketServer(getFileSystem())
-
-	summaryManager := ebpf.NewSummary(configManager, ruleMatcher, wsServer, geoipDB)
-	ebpfManager := ebpf.NewEBPFManager(configManager, summaryManager)
-
-	wsMessageHandler := websocket.NewWebSocketMessageHandler(
-		configManager,
-		ebpfManager,
-		wsServer,
-		ruleMatcher,
-		summaryManager,
-	)
-	wsServer.SetMessageHandler(wsMessageHandler)
-
-	return &Application{
-		ebpfManager:   ebpfManager,
-		wsServer:      wsServer,
-		configManager: configManager,
-	}, nil
-}
-
-type Application struct {
-	ebpfManager   *ebpf.EBPFManager
-	wsServer      interfaces.WebSocketServer
-	configManager *config.ConfigManager
-}
-
-func (app *Application) Start() error {
-	if err := app.ebpfManager.Start(); err != nil {
-		return fmt.Errorf("启动 eBPF 管理器失败: %v", err)
-	}
-	go app.wsServer.Start(app.configManager.Config.Port)
-	return nil
-}
-
-func (app *Application) Shutdown() {
-	log.Println("正在关闭应用程序...")
-	// 关闭 eBPF 管理器
-	app.ebpfManager.Shutdown()
-	// 关闭 WebSocket 服务器
-	if err := app.wsServer.Shutdown(); err != nil {
-		log.Printf("关闭 WebSocket 服务器时发生错误: %v", err)
-	}
-	log.Println("应用程序已关闭")
-}
-
-func waitForShutdown(app *Application) {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
-	<-stop
-	app.Shutdown()
+	select {
+	case err := <-errChan:
+		log.Printf("server start failed: %v", err)
+	case <-stop:
+		log.Println("shutting down application...")
+	}
+	closeWithTimeout("appServer", appServer.Close, time.Second)
+	closeWithTimeout("ebpfManager", ebpfManager.Close, time.Second)
+	closeWithTimeout("processor", processor.Close, time.Second)
+	closeWithTimeout("pool", pool.Close, time.Second)
+	closeWithTimeout("collector", collector.Close, time.Second)
+}
+
+func closeWithTimeout(name string, fn func() error, timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		start := time.Now()
+		fn()
+		log.Printf("Component %s closed in %v", name, time.Since(start))
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return
+	case <-time.After(timeout):
+		log.Printf("Warning: %s close timeout after %v", name, timeout)
+	}
 }
